@@ -16,7 +16,7 @@ exports.ClimbEventQueue = functions.firestore.document('Eventi/{idEvento}')
 		functions.logger.log("ClimbEventQueue","Executed now");
 
 		//In case someone has left the event and there is someone in the queue
-		if(newEvent.numeroPartecipanti < oldEvent.numeroPartecipanti && newEvent.numeroPartecipantiInCoda > 0){
+		if((newEvent.numeroPartecipanti < oldEvent.numeroPartecipanti || newEvent.numeroMassimoPartecipanti > oldEvent.numeroMassimoPartecipanti) && newEvent.numeroPartecipantiInCoda > 0){
 			
 			//We have find the first person in the queue
 			const db = admin.firestore();
@@ -54,12 +54,71 @@ exports.ClimbEventQueue = functions.firestore.document('Eventi/{idEvento}')
 
 						// Commit the batch
 						await batch.commit();
+
+						functions.logger.log("ClimbEventQueue", partecipation.idUtente);
+						const part = partecipation.data()
+
+						//Send the notification to the user
+						const tokenRef = db.collection("MessagingToken").doc(part.idUtente);
+						const doc = await tokenRef.get();
+						if (!doc.exists) {
+						  	console.log('No token for the user: ', part.idUtente);
+						} else {
+							const messToken = doc.data();
+							console.log('Token found for the user: ', part.idUtente);
+							sendNotificationTo(messToken.token,"queueClimbed",part.idEvento,newEvent.nome);
+						}
+
 					});
 				}
 			}
 
 		}
 	});
+
+
+function sendNotificationTo(token,notificationType,eventId,eventName){
+	const payload = {
+		token: token,
+	    data: {
+	        notificationType: notificationType,
+	        eventId: eventId,
+	        eventName: eventName,
+	    }
+	};
+
+	admin.messaging().send(payload).then((response) => {
+	    // Response is a message ID string.
+	    console.log('Successfully sent message:', response);
+	    return {success: true};
+	}).catch((error) => {
+	    return {error: error.code};
+	});
+}
+
+/*
+exports.SendNotification = functions.firestore.document('Eventi/{idEvento}')
+	.onCreate((snapshot, context) => {
+		const payload = {
+			token: "CxD02JuQYW2XgN8_K70wy:APA91bGLKROvSJuidofBC6JtwhWmzVt-k23SXHu2Ze0cXuCmhwghP7kScl-SKrn0XBkQGbeXy2bGem0bQgUq22h_WeNw9LjKE6mcZkH1UpYgOe1FcYn5y8J8zInQO42w5DeSxwZMG6QB",
+		    // notification: {
+		    //     title: 'cloud function demo',
+		    //     body: "Porco dio"
+		    // },
+		    data: {
+		        body: "PORCO DIO A TUTTI I NOIANIIIIIII",
+		    }
+		};
+
+
+		admin.messaging().send(payload).then((response) => {
+		    // Response is a message ID string.
+		    console.log('Successfully sent message:', response);
+		    return {success: true};
+		}).catch((error) => {
+		    return {error: error.code};
+		});
+	});*/
 
 
 
