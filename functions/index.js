@@ -6,8 +6,10 @@ admin.initializeApp();
 
 
 
-//Listens for a change into the event collection
-//Function called every time an event is updated.
+/* Listens for a change into the event collection
+ * Function called every time an event is updated.
+ *
+ **/
 exports.ClimbEventQueue = functions.firestore.document('Eventi/{idEvento}')
 	.onUpdate(async (change, context) => {
 		const oldEvent = change.before.data();
@@ -66,7 +68,18 @@ exports.ClimbEventQueue = functions.firestore.document('Eventi/{idEvento}')
 						} else {
 							const messToken = doc.data();
 							console.log('Token found for the user: ', part.idUtente);
-							sendNotificationTo(messToken.token,"queueClimbed",part.idEvento,newEvent.nome);
+
+							//Formatting the payload
+							const payload = {
+								token: token,
+							    data: {
+							        notificationType: notificationType,
+							        eventId: eventId,
+							        eventName: eventName,
+							    }
+							};
+
+							sendNotification(payload);
 						}
 
 					});
@@ -77,16 +90,18 @@ exports.ClimbEventQueue = functions.firestore.document('Eventi/{idEvento}')
 	});
 
 
-function sendNotificationTo(token,notificationType,eventId,eventName){
-	const payload = {
-		token: token,
-	    data: {
-	        notificationType: notificationType,
-	        eventId: eventId,
-	        eventName: eventName,
-	    }
-	};
-
+/**
+ * Function used to send a notification.
+ * The payload has to be an object with inside at least the token of the user:
+ * const payload = {
+ * 		token: "jnbfwkne",
+ * 		data: {
+ * 			......
+ * 		}
+ * }
+ * 
+ **/
+function sendNotification(payload){
 	admin.messaging().send(payload).then((response) => {
 	    // Response is a message ID string.
 	    console.log('Successfully sent message:', response);
@@ -95,30 +110,6 @@ function sendNotificationTo(token,notificationType,eventId,eventName){
 	    return {error: error.code};
 	});
 }
-
-/*
-exports.SendNotification = functions.firestore.document('Eventi/{idEvento}')
-	.onCreate((snapshot, context) => {
-		const payload = {
-			token: "CxD02JuQYW2XgN8_K70wy:APA91bGLKROvSJuidofBC6JtwhWmzVt-k23SXHu2Ze0cXuCmhwghP7kScl-SKrn0XBkQGbeXy2bGem0bQgUq22h_WeNw9LjKE6mcZkH1UpYgOe1FcYn5y8J8zInQO42w5DeSxwZMG6QB",
-		    // notification: {
-		    //     title: 'cloud function demo',
-		    //     body: "Porco dio"
-		    // },
-		    data: {
-		        body: "PORCO DIO A TUTTI I NOIANIIIIIII",
-		    }
-		};
-
-
-		admin.messaging().send(payload).then((response) => {
-		    // Response is a message ID string.
-		    console.log('Successfully sent message:', response);
-		    return {success: true};
-		}).catch((error) => {
-		    return {error: error.code};
-		});
-	});*/
 
 
 
