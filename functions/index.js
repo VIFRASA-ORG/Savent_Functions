@@ -183,9 +183,9 @@ exports.AddedToGroup = functions.firestore.document('Gruppi/{idGruppo}')
 	});
 
 /**
- * Trigger this function when a Group document is deleted.
- * Function called every time a Group is deleted.
- * This function send a notification to all the group partecipant
+ * Trigger this function when a Event document is deleted.
+ * Function called every time a Event is deleted.
+ * This function send a notification to all the event partecipant
  * and delete all the event partecipation from the Collection "Partecipazioni".
  * 
  **/ 
