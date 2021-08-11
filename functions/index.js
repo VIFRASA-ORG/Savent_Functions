@@ -273,7 +273,7 @@ exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
 			//The flow comes here from the execution of all the promises for the download of the notification token
 			notificationPromises = [];
 
-			if(!notificationTokens.empty){
+			if(notificationTokens.length > 0){
 				//Iterating among all the notification token
 				notificationTokens.forEach((token,index) =>{
 					if(token == null){
@@ -305,13 +305,13 @@ exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
 			return Promise.all(notificationPromises);
 		})
 		.then(notificationsId => {
-			if(!notificationsId.empty){
+			if(notificationsId > 0){
 				//The flow comes here from sending all the notification
 				notificationsId.forEach(notificationId => {
 					console.log('Successfully sent message:', notificationId);
 				});
 
-				if(!partecipationsId.empty){
+				if(partecipationsId > 0){
 					console.log("deleteEvent: ", " Deleting the partecipations from the collection");
 
 					partecipationsId.forEach(partecipationId => {
