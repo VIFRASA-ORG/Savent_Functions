@@ -6,17 +6,20 @@ admin.initializeApp();
 
 
 
+
+
+
 /* Listens for a change into the event collection.
  * Function called every time an event is updated.
  * Let the user climb the queue and send the notification to the new partecipants.
  *
  **/
 exports.ClimbEventQueue = functions.firestore.document('Eventi/{idEvento}')
-	.onUpdate(async (change, context) => {
+	.onUpdate( (change, context) => {
 		const oldEvent = change.before.data();
 		const newEvent = change.after.data();
 
-		functions.logger.log("ClimbEventQueue","Executed now");
+		console.log("ClimbEventQueue","Executed now");
 
 		//In case someone has left the event and there is someone in the queue
 		if((newEvent.numeroPartecipanti < oldEvent.numeroPartecipanti || newEvent.numeroMassimoPartecipanti > oldEvent.numeroMassimoPartecipanti) && newEvent.numeroPartecipantiInCoda > 0){
@@ -27,67 +30,117 @@ exports.ClimbEventQueue = functions.firestore.document('Eventi/{idEvento}')
 			//Find the maximum number of person that is possible to shift
 			const maxNumOfShift = newEvent.numeroMassimoPartecipanti - newEvent.numeroPartecipanti;
 
+			partecipations = [];
+			notificationTokensPromises = [];
+			userId = [];
+
 			//Executing the query to find all the person that is possible to shift
-			const firstPersonInQueue = await db.collection("Partecipazioni").where("idEvento","==",context.params.idEvento).where("accettazione","==",true).where("listaAttesa","==",true).orderBy("dataOra").limit(maxNumOfShift).get();
+			return db.collection("Partecipazioni").where("idEvento","==",context.params.idEvento).where("accettazione","==",true).where("listaAttesa","==",true).orderBy("dataOra").limit(maxNumOfShift).get()
+			.then(partecipationsPromises => {
 
-			functions.logger.log("ClimbEventQueue","Query executed");
+				bachPromises = []
 
-			if(!firstPersonInQueue.empty){
-				let partecipations = [];
+				if(!partecipationsPromises.empty){
+					partecipationsPromises.forEach(doc => partecipations.push(doc));
 
-				firstPersonInQueue.forEach(doc => partecipations.push(doc));
-				functions.logger.log("ClimbEventQueue",partecipations.length);
+					if(partecipations.length > 0){
+						//Partecipation found
 
+						//Iterating among all the partecipation found
+						//All the partecipation to that have to climb the queue
+						partecipations.forEach(partecipation => {
+							console.log("ClimbEventQueue: analizing this partecipation", partecipation.id);
 
-				if(partecipations.length > 0){
-					//Partecipation found
+							//Executing a batch to update the number of partecipant of the event
+							// and the number of partecipant into the queue.
+							//It also set to false the flag "listaAttesa" of the partecipation.
 
-					partecipations.forEach(async partecipation => {
-						functions.logger.log("ClimbEventQueue", partecipation);
+							// Get a new write batch
+							const batch = db.batch();
 
-						// Get a new write batch
-						const batch = db.batch();
+							//We have to update the listaAttesa flag of the partecipation
+							batch.update(db.collection("Partecipazioni").doc(partecipation.id),{listaAttesa: false});
 
-						//We have to update the listaAttesa flag of the partecipation
-						batch.update(db.collection("Partecipazioni").doc(partecipation.id),{listaAttesa: false});
+							//Update the number of partecipant of the event and the number of the people in queue
+							batch.update(db.collection("Eventi").doc(context.params.idEvento),{numeroPartecipanti: admin.firestore.FieldValue.increment(1)});
+							batch.update(db.collection("Eventi").doc(context.params.idEvento),{numeroPartecipantiInCoda: admin.firestore.FieldValue.increment(-1)});
 
-						//Update the number of partecipant of the event and the number of the people in queue
-						batch.update(db.collection("Eventi").doc(context.params.idEvento),{numeroPartecipanti: admin.firestore.FieldValue.increment(1)});
-						batch.update(db.collection("Eventi").doc(context.params.idEvento),{numeroPartecipantiInCoda: admin.firestore.FieldValue.increment(-1)});
-
-						// Commit the batch
-						await batch.commit();
-
-						functions.logger.log("ClimbEventQueue", partecipation.idUtente);
-						const part = partecipation.data()
-
-						//Get the token of the user
-	    				const token = await getNotificationToken(part.idUtente);
-
-						if (token == null) {
-						  	console.log('No token for the user: ', part.idUtente);
-						} else {
-							console.log('Token found for the user: ', part.idUtente);
-
-							//Formatting the payload
-							const payload = {
-								token: token,
-							    data: {
-							        notificationType: "queueClimbed",
-							        eventId: part.idEvento,
-							        eventName: newEvent.nome,
-							    }
-							};
-
-							sendNotification(payload);
-						}
-
-					});
+							// Commit the batch and push to the promise list
+							bachPromises.push(batch.commit());
+						});
+					}
 				}
-			}
 
-		}
+				//execute all the promise
+				return Promise.all(bachPromises);
+			})
+			.then(successes => {
+				//The flow comes here from the execution of all the update batch
+
+				//Iterating among all the partecipation to downlaod all the notification token of the user
+				partecipations.forEach(partecipation => {
+					const part = partecipation.data();
+					console.log("ClimbEventQueue", part.idUtente);
+
+					//download the user token
+					const token = getNotificationToken(part.idUtente);
+					notificationTokensPromises.push(token);
+					userId.push(part.idUtente);
+				})
+
+				//execute all the promises for the notification token
+				return Promise.all(notificationTokensPromises);
+			})
+			.then(notificationTokens => {
+				//The flow comes here from the execution of all the promes for the download of the notification token
+				notificationPromises = [];
+
+				//Iterating among all the notification token
+				notificationTokens.forEach((token,index) =>{
+					if(token == null){
+						console.log('No token for the user: ', userId[index]);
+					}else{
+						console.log('Token found for the user: ', userId[index]);
+						console.log('Token: ', token);
+
+						//Formatting the payload
+						const payload = {
+							token: token,
+						    data: {
+						        notificationType: "queueClimbed",
+						        eventId: partecipations[index].data().idEvento,
+						        eventName: newEvent.nome,
+						    }
+						};
+
+						//send the notification to the specified token
+						const notifProm = sendNotification(payload);
+
+						//adding the task to the promise list
+						notificationPromises.push(notifProm);
+					}
+				});
+
+				//execute all the promises for sending the notification
+				return Promise.all(notificationPromises);
+			})
+			.then(notificationsId => {
+				//The flow comes here from sending all the notification
+				notificationsId.forEach(notificationId => {
+					console.log('Successfully sent message:', notificationId);
+				});
+			})
+			.catch(error => {
+				//Catches all kind of error
+				console.log("Error: ", error);
+			});
+		}else return 0;
 	});
+
+
+
+
+
 
 /**
  * Listens for a creation of a new group.
@@ -104,36 +157,182 @@ exports.GroupCreated = functions.firestore.document('Gruppi/{idGruppo}')
 	    const newGroup = snap.data();
 	    const idAdmin = newGroup.idAmministratore;
 
+	    notificationTokensPromises = []
+	    usersId = [];
+
 	    functions.logger.log("GroupCreated","Iterating among all the component of the group");
 	    //Iterating among all the component of the group just created 
-	    newGroup.idComponenti.forEach(async componentId => {
+	    newGroup.idComponenti.forEach( componentId => {
 	    	if(componentId == idAdmin){
 	    		return;
 	    	}
 
 	    	//Get the token of the user
-	    	const token = await getNotificationToken(componentId);
-
-			if (token == null) {
-			  	console.log('No token for the user: ', componentId);
-			} else {
-				console.log('Token found for the user: ', componentId);
-				console.log('Token: ', token);
-
-				//Formatting the payload
-				const payload = {
-					token: token,
-				    data: {
-				        notificationType: "addedToGroup",
-				        groupId: String(context.params.idGruppo),
-				        groupName: String(newGroup.nome),
-				    }
-				};
-
-				sendNotification(payload);
-			}
+	    	const token = getNotificationToken(componentId);
+	    	notificationTokensPromises.push(token)
+	    	usersId.push(componentId);
 	    });
+
+	    return Promise.all(notificationTokensPromises)
+	    .then(notificationTokens => {
+			//The flow comes here from the execution of all the promises for the download of the notification token
+			notificationPromises = [];
+
+			//Iterating among all the notification token
+			notificationTokens.forEach((token,index) =>{
+				if(token == null){
+					console.log('No token for the user: ', usersId[index]);
+				}else{
+					console.log('Token found for the user: ', usersId[index]);
+					console.log('Token: ', token);
+
+					//Formatting the payload
+					const payload = {
+						token: token,
+					    data: {
+					        notificationType: "addedToGroup",
+					        groupId: String(context.params.idGruppo),
+					        groupName: String(newGroup.nome),
+					    }
+					};
+
+					//send the notification to the specified token
+					const notifProm = sendNotification(payload);
+
+					//adding the task to the promise list
+					notificationPromises.push(notifProm);
+				}
+			});
+
+			//execute all the promises for sending the notification
+			return Promise.all(notificationPromises);
+		})
+		.then(notificationsId => {
+			//The flow comes here from sending all the notification
+			notificationsId.forEach(notificationId => {
+				console.log('Successfully sent message:', notificationId);
+			});
+		})
+		.catch(error => {
+			//Catches all kind of error
+			console.log("Error: ", error);
+		});
     });
+
+
+
+
+
+
+
+/**
+ * Trigger this function when a Event document is deleted.
+ * Function called every time a Event is deleted.
+ * This function send a notification to all the event partecipant
+ * and delete all the event partecipation from the Collection "Partecipazioni".
+ * 
+ **/ 
+exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
+	.onDelete((snap,context) => {
+
+		console.log("deleteEvent", " Function started");
+		const db = admin.firestore();
+		const deletedEvent = snap.data();
+
+		notificationTokensPromises = [];
+		usersId = [];
+
+		partecipationsId = [];
+		deletePartecipationPromises = [];
+
+		//Get all the partecipation associated to that event
+		return db.collection("Partecipazioni").where("idEvento","==",context.params.idEvento).get()
+		.then(snapshot => {
+			if(snapshot.empty){
+				console.log("No partecipations associated to the event: ", context.params.idEvento);
+				return;
+			}
+
+			console.log("deleteEvent", " Iterating among all the partecipations");
+
+
+			snapshot.forEach(doc => {
+				//Get the token of the user
+				partecipationId = doc.id;
+				partecipation = doc.data();
+
+				console.log("Partecipation: ", doc.id);
+
+		    	const token = getNotificationToken(partecipation.idUtente);
+		    	notificationTokensPromises.push(token)
+		    	usersId.push(partecipation.idUtente);
+		    	partecipationsId.push(partecipationId);
+			});
+
+			return Promise.all(notificationTokensPromises);
+		})
+		.then(notificationTokens => {
+			//The flow comes here from the execution of all the promises for the download of the notification token
+			notificationPromises = [];
+
+			//Iterating among all the notification token
+			notificationTokens.forEach((token,index) =>{
+				if(token == null){
+					console.log('No token for the user: ', usersId[index]);
+				}else{
+					console.log('Token found for the user: ', usersId[index]);
+					console.log('Token: ', token);
+
+					//Formatting the payload
+					const payload = {
+						token: token,
+					    data: {
+					        notificationType: "eventDeleted",
+					        eventId: context.params.idEvento,
+					        eventName: deletedEvent.nome,
+					    }
+					};
+
+					//send the notification to the specified token
+					const notifProm = sendNotification(payload);
+
+					//adding the task to the promise list
+					notificationPromises.push(notifProm);
+				}
+			});
+
+			//execute all the promises for sending the notification
+			return Promise.all(notificationPromises);
+		})
+		.then(notificationsId => {
+			//The flow comes here from sending all the notification
+			notificationsId.forEach(notificationId => {
+				console.log('Successfully sent message:', notificationId);
+			});
+
+			console.log("deleteEvent: ", " Deleting the partecipations from the collection");
+
+			partecipationsId.forEach(partecipationId => {
+				const res = db.collection('Partecipazioni').doc(partecipationId).delete();
+				deletePartecipationPromises.push(res);
+			});
+
+			return Promise.all(deletePartecipationPromises);
+
+		})
+		.then(succes => {
+			console.log("deleteEvent: ", " End of execution");
+		})
+		.catch(error => {
+			//Catches all kind of error
+			console.log("Error: ", error);
+		});
+	});
+
+
+
+
+
 
 /**
  * Listens for a change into the Gruppi collection.
@@ -151,17 +350,29 @@ exports.AddedToGroup = functions.firestore.document('Gruppi/{idGruppo}')
 		oldGroupComponent = oldGroup.idComponenti;
 		newGroupComponent = newGroup.idComponenti;
 
-		newGroupComponent.forEach(async componentId => {
+		notificationTokensPromises = [];
+		userId = [];
+
+		newGroupComponent.forEach( componentId => {
 			if(!oldGroupComponent.includes(componentId)){
 				console.log("Added a new user to the group: ", componentId);
 
 				//download the user token
-				const token = await getNotificationToken(componentId);
+				const token = getNotificationToken(componentId);
+				notificationTokensPromises.push(token);
+				userId.push(componentId);
+			}
+		})
 
+		return Promise.all(notificationTokensPromises).then(notificationTokens => {
+
+			notificationPromises = [];
+
+			notificationTokens.forEach((token,index) =>{
 				if(token == null){
-					console.log('No token for the user: ', componentId);
+					console.log('No token for the user: ', userId[index]);
 				}else{
-					console.log('Token found for the user: ', componentId);
+					console.log('Token found for the user: ', userId[index]);
 					console.log('Token: ', token);
 
 					//Formatting the payload
@@ -174,77 +385,22 @@ exports.AddedToGroup = functions.firestore.document('Gruppi/{idGruppo}')
 					    }
 					};
 
-					sendNotification(payload);
+					const notifProm = sendNotification(payload);
+					notificationPromises.push(notifProm);
 				}
+			});
 
-			}
+			return Promise.all(notificationPromises);
 		})
-		console.log("End of execution!");
-	});
-
-/**
- * Trigger this function when a Event document is deleted.
- * Function called every time a Event is deleted.
- * This function send a notification to all the event partecipant
- * and delete all the event partecipation from the Collection "Partecipazioni".
- * 
- **/ 
-exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
-	.onDelete(async (snap,context) => {
-
-		console.log("deleteEvent", " Function started");
-		const db = admin.firestore();
-		const deletedEvent = snap.data();
-
-		//Get all the partecipation associated to that event
-		const snapshot = await db.collection("Partecipazioni").where("idEvento","==",context.params.idEvento).get();
-		if(snapshot.empty){
-			console.log("No partecipations associated to the event: ", context.params.idEvento);
-			return;
-		}
-
-		console.log("deleteEvent", " Iterating among all the partecipations");
-
-		//iterating among all the partecipation to send the notification to all user partecipating to the event
-		snapshot.forEach(async doc => {
-			partecipationId = doc.id;
-			partecipation = doc.data();
-
-			console.log("Partecipation: ", doc.id);
-
-			//getting the token to send the notification
-			const token = await getNotificationToken(partecipation.idUtente);
-
-			if(token == null){
-				console.log('No token for the user: ', partecipation.idUtente);
-			}else{
-				console.log('Token found for the user: ', partecipation.idUtente);
-				console.log('Token: ', token);
-
-				//Formatting the payload
-				const payload = {
-					token: token,
-				    data: {
-				        notificationType: "eventDeleted",
-				        eventId: context.params.idEvento,
-				        eventName: deletedEvent.nome,
-				    }
-				};
-
-				sendNotification(payload);
-			}
-
-			console.log("deleteEvent: ", " Deleting the partecipation from the collection");
-
-			//delete the partecipation
-			const res = await db.collection('Partecipazioni').doc(partecipationId).delete();
-			console.log(res)
+		.then(notificationsId => {
+			notificationsId.forEach(notificationId => {
+				console.log('Successfully sent message:', notificationId);
+			});
+		})
+		.catch(error => {
+			console.log("Error: ", error);
 		});
-
-		console.log("deleteEvent: ", " End of execution");
 	});
-
-
 
 
 
@@ -265,13 +421,17 @@ exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
  * 
  **/
 function sendNotification(payload){
+
+	return admin.messaging().send(payload);
+
+	/*
 	admin.messaging().send(payload).then((response) => {
 	    // Response is a message ID string.
 	    console.log('Successfully sent message:', response);
 	    return {success: true};
 	}).catch((error) => {
 	    return {error: error.code};
-	});
+	});*/
 }
 
 /**
