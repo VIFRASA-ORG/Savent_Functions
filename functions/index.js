@@ -250,24 +250,22 @@ exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
 		.then(snapshot => {
 			if(snapshot.empty){
 				console.log("No partecipations associated to the event: ", context.params.idEvento);
-				return;
+			}else{
+				console.log("deleteEvent", " Iterating among all the partecipations");
+
+				snapshot.forEach(doc => {
+					//Get the token of the user
+					partecipationId = doc.id;
+					partecipation = doc.data();
+
+					console.log("Partecipation: ", doc.id);
+
+			    	const token = getNotificationToken(partecipation.idUtente);
+			    	notificationTokensPromises.push(token)
+			    	usersId.push(partecipation.idUtente);
+			    	partecipationsId.push(partecipationId);
+				});
 			}
-
-			console.log("deleteEvent", " Iterating among all the partecipations");
-
-
-			snapshot.forEach(doc => {
-				//Get the token of the user
-				partecipationId = doc.id;
-				partecipation = doc.data();
-
-				console.log("Partecipation: ", doc.id);
-
-		    	const token = getNotificationToken(partecipation.idUtente);
-		    	notificationTokensPromises.push(token)
-		    	usersId.push(partecipation.idUtente);
-		    	partecipationsId.push(partecipationId);
-			});
 
 			return Promise.all(notificationTokensPromises);
 		})
@@ -275,47 +273,53 @@ exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
 			//The flow comes here from the execution of all the promises for the download of the notification token
 			notificationPromises = [];
 
-			//Iterating among all the notification token
-			notificationTokens.forEach((token,index) =>{
-				if(token == null){
-					console.log('No token for the user: ', usersId[index]);
-				}else{
-					console.log('Token found for the user: ', usersId[index]);
-					console.log('Token: ', token);
+			if(!notificationTokens.empty){
+				//Iterating among all the notification token
+				notificationTokens.forEach((token,index) =>{
+					if(token == null){
+						console.log('No token for the user: ', usersId[index]);
+					}else{
+						console.log('Token found for the user: ', usersId[index]);
+						console.log('Token: ', token);
 
-					//Formatting the payload
-					const payload = {
-						token: token,
-					    data: {
-					        notificationType: "eventDeleted",
-					        eventId: context.params.idEvento,
-					        eventName: deletedEvent.nome,
-					    }
-					};
+						//Formatting the payload
+						const payload = {
+							token: token,
+						    data: {
+						        notificationType: "eventDeleted",
+						        eventId: context.params.idEvento,
+						        eventName: deletedEvent.nome,
+						    }
+						};
 
-					//send the notification to the specified token
-					const notifProm = sendNotification(payload);
+						//send the notification to the specified token
+						const notifProm = sendNotification(payload);
 
-					//adding the task to the promise list
-					notificationPromises.push(notifProm);
-				}
-			});
+						//adding the task to the promise list
+						notificationPromises.push(notifProm);
+					}
+				});
+			}
 
 			//execute all the promises for sending the notification
 			return Promise.all(notificationPromises);
 		})
 		.then(notificationsId => {
-			//The flow comes here from sending all the notification
-			notificationsId.forEach(notificationId => {
-				console.log('Successfully sent message:', notificationId);
-			});
+			if(!notificationsId.empty){
+				//The flow comes here from sending all the notification
+				notificationsId.forEach(notificationId => {
+					console.log('Successfully sent message:', notificationId);
+				});
 
-			console.log("deleteEvent: ", " Deleting the partecipations from the collection");
+				if(!partecipationsId.empty){
+					console.log("deleteEvent: ", " Deleting the partecipations from the collection");
 
-			partecipationsId.forEach(partecipationId => {
-				const res = db.collection('Partecipazioni').doc(partecipationId).delete();
-				deletePartecipationPromises.push(res);
-			});
+					partecipationsId.forEach(partecipationId => {
+						const res = db.collection('Partecipazioni').doc(partecipationId).delete();
+						deletePartecipationPromises.push(res);
+					});
+				}
+			}
 
 			return Promise.all(deletePartecipationPromises);
 
