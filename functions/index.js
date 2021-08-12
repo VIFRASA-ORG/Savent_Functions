@@ -305,13 +305,13 @@ exports.deleteEvent = functions.firestore.document('Eventi/{idEvento}')
 			return Promise.all(notificationPromises);
 		})
 		.then(notificationsId => {
-			if(notificationsId > 0){
+			if(notificationsId.length > 0){
 				//The flow comes here from sending all the notification
 				notificationsId.forEach(notificationId => {
 					console.log('Successfully sent message:', notificationId);
 				});
 
-				if(partecipationsId > 0){
+				if(partecipationsId.length > 0){
 					console.log("deleteEvent: ", " Deleting the partecipations from the collection");
 
 					partecipationsId.forEach(partecipationId => {
